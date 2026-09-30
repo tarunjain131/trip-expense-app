@@ -1,36 +1,100 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Splitrip — group expense splitting for trips
 
-## Getting Started
+A Splitwise-style app for groups (built around a 12-person trip): create a trip, add members, record expenses
+(equal / exact / percentage / shares, one or many payers), see who is owed what, and settle up with the fewest payments.
 
-First, run the development server:
+**Stack:** Next.js 16 (App Router, Server Components + Server Actions) · TypeScript · Tailwind CSS v4 · shadcn/ui (Radix) ·
+Lucide · PostgreSQL · Prisma 7 · Zod · React Hook Form · Vitest · Playwright.
+
+## Setup
+
+Requirements: Node 20.19+ (22 recommended), npm, and a PostgreSQL database (local, Neon, Supabase, Railway, ...).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install                      # also runs `prisma generate`
+cp .env.example .env             # then set DATABASE_URL
+npm run db:deploy                # apply migrations   (use `npm run db:migrate` while developing schema changes)
+npm run db:seed                  # optional: demo "Chopta Trip — October 2026" with 12 members and 10 expenses
+npm run dev                      # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Environment variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Variable | Required | Description |
+| --- | --- | --- |
+| `DATABASE_URL` | yes | PostgreSQL connection string, e.g. `postgresql://user:pass@host:5432/db?schema=public` |
+| `NEXT_PUBLIC_TIME_ZONE` | no | IANA zone used to show settlement timestamps and "today" in forms (default `Asia/Kolkata`) |
+| `TEST_DATABASE_URL` | tests | Database for integration tests (default `postgresql://postgres@localhost:5432/split_expense_test`) |
+| `E2E_DATABASE_URL` | e2e | Database for Playwright (defaults to the same test database) |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Never commit `.env`; only `.env.example` is tracked.
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Development server |
+| `npm run build` / `npm start` | Production build / server (`build` runs `prisma generate` first) |
+| `npm test` | Vitest: pure-domain unit tests **and** service integration tests against `TEST_DATABASE_URL` (migrated automatically) |
+| `npm run test:unit` | Only the pure financial-engine tests (no database needed) |
+| `npm run test:e2e` | Playwright end-to-end flow against a production build on port 3100 and the test database |
+| `npm run typecheck` / `npm run lint` | TypeScript and ESLint |
+| `npm run db:migrate` / `db:deploy` / `db:seed` / `db:studio` | Prisma helpers |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Create the test database once (`createdb split_expense_test`). For E2E, run `npx playwright install chromium`, or reuse an installed
+browser with `PW_CHANNEL=msedge npm run test:e2e` (or `chrome`).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deploying (Vercel or any Node host)
 
-## Deploy on Vercel
+1. Provision Postgres and set `DATABASE_URL` in the host's environment.
+2. Run `npm run db:deploy` against that database (CI step or one-off).
+3. Deploy. `postinstall` generates the Prisma client; `npm run build` does too.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Nothing is provider-specific: Prisma uses the standard `pg` driver adapter. With a pooled connection string (e.g. Neon/Supabase pooler)
+everything works as-is.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Architecture
+
+```
+src/lib/
+  money/        integer minor-unit parsing + formatting (no floats in calculations), currency table
+  expenses/     calculateExpenseSplits(), validatePayers()        ← pure
+  balances/     calculateMemberBalances(), calculateOutstandingBalances() ← pure
+  settlements/  calculateSettlements() (debt simplification), validateSettlementAgainstBalances() ← pure
+  summary/      calculateTripSummary()                            ← pure
+  validation/   Zod schemas (all input is validated on the server)
+  services/     transactional mutations (Prisma) — trips/members, expenses, settlements
+  db/           Prisma client + read queries that feed the domain layer
+src/actions/    thin Server Actions: call services, map errors to user-safe messages
+src/app/        routes (Server Components) ·  src/components/  UI
+prisma/         schema, migrations, seed
+tests/          unit (domain) · integration (services + real DB) · e2e (Playwright)
+```
+
+### Money & balances
+
+* All amounts are integers in minor units (₹100.50 = `10050` paise), stored as `INTEGER` with `CHECK` constraints. Typed amounts are
+  parsed with string arithmetic (never `parseFloat`). Percentages are basis points (33.33% = `3333`).
+* Splits use the **largest-remainder method** with deterministic tie-breaking, so shares always sum exactly to the total (₹100 ÷ 3 =
+  33.34 / 33.33 / 33.33).
+* Balances are **never stored**. `net = paid − share + settlements paid − settlements received`, derived on every request from expenses and
+  `COMPLETED` settlements. Editing/deleting an expense or reverting a settlement therefore updates everything automatically.
+* **Settle up** works from net balances only. It finds the largest partition of members into independent zero-sum groups (exact bitmask DP for
+  up to 16 non-zero balances, greedy beyond that), then settles each group in at most `k−1` payments.
+* Marking a payment as paid creates a `Settlement` row (kept forever). Undo sets `status = REVERTED`. Part payments are supported; a payment
+  can never exceed what the payer owes or the receiver is owed — this is re-checked inside the transaction under a per-trip row lock, so double
+  clicks and stale screens can't over-settle.
+
+### Security model (no auth yet)
+
+* Every mutation is validated with Zod on the server and all ids are checked to belong to the trip in the URL (no cross-trip access).
+* Trip ids are random UUIDs, so a trip link acts as a capability: anyone with the link can edit that trip. Adding auth later is prepared for
+  (`User` model, `Trip.ownerId`, `TripMember.userId`); wrap the services with an ownership check.
+* "You" is a per-trip cookie set on this device; it's display-only and never enters calculations.
+
+## Known limitations
+
+* No authentication or sharing/invites yet; anyone with a trip URL can modify it.
+* Single currency per trip (INR default; INR/USD/EUR/GBP selectable), no conversion.
+* Members that appear in any expense or settlement cannot be deleted (only renamed) to keep history intact.
+* Not implemented (by design for v1): offline support, receipts/OCR, recurring expenses, notifications.

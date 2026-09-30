@@ -1,0 +1,150 @@
+// Money is always stored as integer minor units (e.g. paise for INR).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Future-ready: authentication is not implemented yet.
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trips   Trip[]
+  members TripMember[]
+}
+
+model Trip {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  currency    String   @default("INR")
+  ownerId     String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User?        @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  members     TripMember[]
+  expenses    Expense[]
+  settlements Settlement[]
+
+  @@index([ownerId])
+  @@index([createdAt])
+}
+
+model TripMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  tripId    String   @db.Uuid
+  name      String
+  userId    String?  @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trip     Trip           @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  user     User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  payments ExpensePayer[]
+  splits   ExpenseSplit[]
+  paid     Settlement[]   @relation("SettlementPayer")
+  received Settlement[]   @relation("SettlementReceiver")
+
+  @@index([tripId])
+}
+
+enum SplitType {
+  EQUAL
+  EXACT
+  PERCENTAGE
+  SHARES
+}
+
+enum ExpenseCategory {
+  FOOD
+  HOTEL
+  TRANSPORT
+  FUEL
+  TICKETS
+  ACTIVITIES
+  SHOPPING
+  MISC
+}
+
+model Expense {
+  id        String           @id @default(uuid()) @db.Uuid
+  tripId    String           @db.Uuid
+  title     String
+  amount    Int // minor units
+  currency  String           @default("INR")
+  category  ExpenseCategory?
+  notes     String?
+  splitType SplitType        @default(EQUAL)
+  spentAt   DateTime         @default(now())
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  trip   Trip           @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  payers ExpensePayer[]
+  splits ExpenseSplit[]
+
+  @@index([tripId, spentAt])
+  @@index([tripId, category])
+}
+
+model ExpensePayer {
+  id        String @id @default(uuid()) @db.Uuid
+  expenseId String @db.Uuid
+  memberId  String @db.Uuid
+  amount    Int // minor units this member paid
+
+  expense Expense    @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  member  TripMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+
+  @@unique([expenseId, memberId])
+  @@index([memberId])
+}
+
+model ExpenseSplit {
+  id        String @id @default(uuid()) @db.Uuid
+  expenseId String @db.Uuid
+  memberId  String @db.Uuid
+  amount    Int // minor units this member owes (computed by the server)
+  /// Raw input used to derive `amount`: exact minor units, basis points, or share count. Null for EQUAL.
+  value     Int?
+
+  expense Expense    @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  member  TripMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+
+  @@unique([expenseId, memberId])
+  @@index([memberId])
+}
+
+enum SettlementStatus {
+  COMPLETED
+  REVERTED
+}
+
+model Settlement {
+  id         String           @id @default(uuid()) @db.Uuid
+  tripId     String           @db.Uuid
+  payerId    String           @db.Uuid
+  receiverId String           @db.Uuid
+  amount     Int // minor units
+  status     SettlementStatus @default(COMPLETED)
+  createdAt  DateTime         @default(now())
+  paidAt     DateTime         @default(now())
+  revertedAt DateTime?
+
+  trip     Trip       @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  payer    TripMember @relation("SettlementPayer", fields: [payerId], references: [id], onDelete: Restrict)
+  receiver TripMember @relation("SettlementReceiver", fields: [receiverId], references: [id], onDelete: Restrict)
+
+  @@index([tripId, status])
+  @@index([payerId])
+  @@index([receiverId])
+}
