@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { getTripBasics } from "@/lib/db/queries";
 import { plural } from "@/lib/format";
+import { LogoutButton } from "@/components/auth/login-form";
 import { TripBottomNav, TripTopNav } from "@/components/trip/trip-nav";
 
 export async function generateMetadata({ params }: LayoutProps<"/trips/[tripId]">) {
@@ -31,6 +32,9 @@ export default async function TripLayout({ children, params }: LayoutProps<"/tri
             <div className="min-w-0">
               <p className="truncate text-base font-semibold leading-tight">{trip.name}</p>
               <p className="text-xs text-muted-foreground">{plural(trip._count.members, "member")}</p>
+            </div>
+            <div className="ml-auto">
+              <LogoutButton />
             </div>
           </div>
           <TripTopNav tripId={tripId} />

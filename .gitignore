@@ -49,3 +49,4 @@ next-env.d.ts
 /playwright-report/
 /blob-report/
 /.shots/
+/.next-e2e/

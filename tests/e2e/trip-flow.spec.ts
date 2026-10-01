@@ -1,6 +1,40 @@
 import { expect, test, type Page } from "@playwright/test";
+import { E2E_PASSWORD } from "../../playwright.config";
 
 const NAMES = ["Tarun", "Rahul", "Amit", "Rohit", "Kunal", "Ankit", "Vivek", "Harsh", "Mohit", "Nikhil", "Akash", "Varun"];
+
+async function login(page: Page) {
+  await page.goto("/login");
+  await page.getByLabel("Password").fill(E2E_PASSWORD);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page).toHaveURL(/\/trips$/);
+}
+
+test.describe("access control", () => {
+  test("the app is locked until the password is entered", async ({ page, request }) => {
+    // Unauthenticated pages redirect to the login page, preserving where you were going.
+    await page.goto("/trips/00000000-0000-4000-8000-000000000000/members");
+    await expect(page).toHaveURL(/\/login\?next=/);
+    // Server Actions / POSTs without a session are rejected outright.
+    const post = await request.post("/trips", { data: {}, maxRedirects: 0 });
+    expect(post.status()).toBe(401);
+
+    await page.getByLabel("Password").fill("wrong-password");
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page.locator("#login-error")).toContainText("isn't right");
+
+    await page.getByLabel("Password").fill(E2E_PASSWORD);
+    await page.getByRole("button", { name: "Log in" }).click();
+    // lands back on the page that was requested (404 trip is fine - we are past the gate)
+    await expect(page).toHaveURL(/\/trips\/0000/);
+
+    await page.goto("/trips");
+    await page.getByRole("button", { name: /log out/i }).click();
+    await expect(page).toHaveURL(/\/login/);
+    await page.goto("/trips");
+    await expect(page).toHaveURL(/\/login/);
+  });
+});
 
 async function addExpense(
   page: Page,
@@ -22,6 +56,7 @@ async function addExpense(
 }
 
 test("trip → members → expenses → balances → settle up", async ({ page }) => {
+  await login(page);
   // 1. create a trip
   await page.goto("/trips");
   await page.getByRole("button", { name: /new trip|create your first trip/i }).first().click();
@@ -98,6 +133,7 @@ test("trip → members → expenses → balances → settle up", async ({ page }
 });
 
 test("edit and delete an expense, validation errors, split types", async ({ page }) => {
+  await login(page);
   await page.goto("/trips");
   await page.getByRole("button", { name: /new trip|create your first trip/i }).first().click();
   await page.getByLabel("Trip name").fill(`E2E Edit ${Date.now()}`);

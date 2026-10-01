@@ -7,6 +7,7 @@ import { plural } from "@/lib/format";
 import { CreateTripDialog } from "@/components/trip/create-trip-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { Card } from "@/components/ui/card";
+import { LogoutButton } from "@/components/auth/login-form";
 
 export const metadata: Metadata = { title: "Your trips" };
 export const dynamic = "force-dynamic";
@@ -20,7 +21,10 @@ export default async function TripsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Your trips</h1>
           <p className="text-sm text-muted-foreground">Track shared expenses and settle up with your group.</p>
         </div>
-        {trips.length > 0 && <CreateTripDialog />}
+        <div className="flex items-center gap-1">
+          {trips.length > 0 && <CreateTripDialog />}
+          <LogoutButton />
+        </div>
       </div>
 
       {trips.length === 0 ? (

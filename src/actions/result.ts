@@ -1,4 +1,6 @@
+import { cookies } from "next/headers";
 import { ZodError } from "zod";
+import { AUTH_COOKIE, authMode, verifySessionToken } from "@/lib/auth";
 import { DomainError } from "@/lib/errors";
 
 export type ActionResult<T = undefined> =
@@ -38,8 +40,19 @@ export function toFailure(err: unknown): { ok: false; error: string; field?: str
   return { ok: false, error: GENERIC };
 }
 
+/** Defense in depth: the proxy already gates requests, but every action re-checks the session. */
+async function assertAuthenticated() {
+  const mode = authMode();
+  if (mode === "disabled") return;
+  const token = (await cookies()).get(AUTH_COOKIE)?.value;
+  if (mode !== "enabled" || !(await verifySessionToken(token))) {
+    throw new DomainError("Your session has expired. Please log in again.", "UNAUTHORIZED");
+  }
+}
+
 export async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   try {
+    await assertAuthenticated();
     return { ok: true, data: await fn() };
   } catch (err) {
     return toFailure(err);

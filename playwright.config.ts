@@ -4,6 +4,8 @@ const PORT = 3100;
 const E2E_DATABASE_URL =
   process.env.E2E_DATABASE_URL ?? "postgresql://postgres@localhost:5432/split_expense_test?schema=public";
 
+export const E2E_PASSWORD = "e2e-password";
+
 export default defineConfig({
   testDir: "tests/e2e",
   timeout: 90_000,
@@ -21,9 +23,9 @@ export default defineConfig({
   webServer: {
     // Production build against the dedicated test database.
     command: `npx prisma migrate deploy && npm run build && npx next start -p ${PORT}`,
-    url: `http://localhost:${PORT}/trips`,
+    url: `http://localhost:${PORT}/login`,
     timeout: 300_000,
     reuseExistingServer: !process.env.CI,
-    env: { DATABASE_URL: E2E_DATABASE_URL },
+    env: { DATABASE_URL: E2E_DATABASE_URL, APP_PASSWORD: E2E_PASSWORD, AUTH_SECRET: "e2e-secret", NEXT_DIST_DIR: ".next-e2e" },
   },
 });
