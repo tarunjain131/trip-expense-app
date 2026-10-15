@@ -1,9 +1,9 @@
 import "dotenv/config";
 import { prisma } from "../src/lib/db/prisma";
-import { addMember, createTrip } from "../src/lib/services/trips";
+import { addMember, createTrip, deleteTrip } from "../src/lib/services/trips";
 import { createExpense } from "../src/lib/services/expenses";
 import { createSettlement } from "../src/lib/services/settlements";
-import { getTripLedger } from "../src/lib/db/queries";
+import { loadTripLedger } from "../src/lib/db/queries";
 import { formatMoney } from "../src/lib/money";
 
 const TRIP_NAME = "Chopta Trip — October 2026";
@@ -11,7 +11,7 @@ const NAMES = ["Tarun", "Rahul", "Amit", "Rohit", "Kunal", "Ankit", "Vivek", "Ha
 
 async function main() {
   // Idempotent: replace any previous demo trip (cascades to members/expenses/settlements).
-  await prisma.trip.deleteMany({ where: { name: TRIP_NAME } });
+  for (const old of await prisma.trip.findMany({ where: { name: TRIP_NAME }, select: { id: true } })) await deleteTrip(old.id);
 
   const trip = await createTrip({ name: TRIP_NAME, description: "Group trip - 12 friends, 4 days", currency: "INR" });
   const id: Record<string, string> = {};
@@ -111,13 +111,13 @@ async function main() {
   for (const e of expenses) await createExpense(trip.id, e);
 
   // Record one settlement using the engine's own first suggestion (nothing hard-coded).
-  const before = (await getTripLedger(trip.id))!;
+  const before = (await loadTripLedger(trip.id))!;
   const first = before.suggestions[0];
   if (first) {
     await createSettlement(trip.id, { payerId: first.fromId, receiverId: first.toId, amount: (first.amountMinor / 100).toFixed(2) });
   }
 
-  const ledger = (await getTripLedger(trip.id))!;
+  const ledger = (await loadTripLedger(trip.id))!;
   console.log(`\nSeeded "${TRIP_NAME}"  (${trip.id})`);
   console.log(`Total spent: ${formatMoney(ledger.summary.totalSpent)} across ${ledger.expenses.length} expenses`);
   console.log(`Suggested settlements remaining: ${ledger.suggestions.length}`);

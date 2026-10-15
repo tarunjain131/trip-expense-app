@@ -8,10 +8,15 @@ import {
 import { calculateSettlements, type SuggestedSettlement } from "../settlements/simplify";
 import { calculateTripSummary, type TripSummary } from "../summary/calculate";
 import type { ExpenseCategory, SplitType } from "../expenses/types";
+import { getTripAccess, requireUserPage } from "../access";
+
+export type TripKind = "TRIP" | "GROUP" | "FRIEND";
 
 export interface MemberDTO {
   id: string;
   name: string;
+  /** True when this person has an account linked. */
+  linked: boolean;
 }
 
 export interface ExpenseDTO {
@@ -41,7 +46,18 @@ export interface SettlementDTO {
 }
 
 export interface TripLedger {
-  trip: { id: string; name: string; description: string | null; currency: string; createdAt: Date };
+  trip: {
+    id: string;
+    name: string;
+    description: string | null;
+    currency: string;
+    kind: TripKind;
+    createdAt: Date;
+    isOwner: boolean;
+    inviteCode: string | null;
+  };
+  /** The member linked to the logged-in account, if any. */
+  youMemberId: string | null;
   members: MemberDTO[];
   memberById: Map<string, MemberDTO>;
   expenses: ExpenseDTO[];
@@ -52,13 +68,31 @@ export interface TripLedger {
   summary: TripSummary;
 }
 
+/** Only returns trips the logged-in user owns or belongs to. */
 export const getTripBasics = cache(async (tripId: string) => {
-  if (!isUuid(tripId)) return null;
-  return prisma.trip.findUnique({
+  const access = await getTripAccess(tripId);
+  if (!access) return null;
+  const trip = await prisma.trip.findUnique({
     where: { id: tripId },
-    select: { id: true, name: true, description: true, currency: true, createdAt: true, _count: { select: { members: true } } },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      currency: true,
+      kind: true,
+      createdAt: true,
+      members: { select: { id: true, name: true } },
+    },
   });
+  if (!trip) return null;
+  return { ...trip, name: displayTripName(trip, access.youMemberId), memberCount: trip.members.length, isOwner: access.isOwner };
 });
+
+/** A two-person ledger is shown as the *other* person's name, whichever side is looking. */
+export function displayTripName(trip: { name: string; kind: string; members: { id: string; name: string }[] }, youMemberId: string | null) {
+  if (trip.kind !== "FRIEND" || !youMemberId) return trip.name;
+  return trip.members.find((m) => m.id !== youMemberId)?.name ?? trip.name;
+}
 
 export function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -66,13 +100,23 @@ export function isUuid(v: string) {
 
 /** Everything about a trip in three queries; balances and settlements are derived, never stored. */
 export const getTripLedger = cache(async (tripId: string): Promise<TripLedger | null> => {
+  const access = await getTripAccess(tripId);
+  if (!access) return null;
+  return loadTripLedger(tripId, access);
+});
+
+/** Unguarded loader (callers must have checked access). Also used directly by tests. */
+export async function loadTripLedger(
+  tripId: string,
+  access?: { isOwner: boolean; youMemberId: string | null },
+): Promise<TripLedger | null> {
   if (!isUuid(tripId)) return null;
-  const [trip, members, expenses, settlements] = await Promise.all([
+  const [trip, rawMembers, expenses, settlements] = await Promise.all([
     prisma.trip.findUnique({
       where: { id: tripId },
-      select: { id: true, name: true, description: true, currency: true, createdAt: true },
+      select: { id: true, name: true, description: true, currency: true, kind: true, createdAt: true, inviteCode: true },
     }),
-    prisma.tripMember.findMany({ where: { tripId }, select: { id: true, name: true }, orderBy: [{ createdAt: "asc" }, { name: "asc" }] }),
+    prisma.tripMember.findMany({ where: { tripId }, select: { id: true, name: true, userId: true }, orderBy: [{ createdAt: "asc" }, { name: "asc" }] }),
     prisma.expense.findMany({
       where: { tripId },
       orderBy: [{ spentAt: "desc" }, { createdAt: "desc" }],
@@ -84,6 +128,7 @@ export const getTripLedger = cache(async (tripId: string): Promise<TripLedger | 
     prisma.settlement.findMany({ where: { tripId }, orderBy: { paidAt: "desc" } }),
   ]);
   if (!trip) return null;
+  const members: MemberDTO[] = rawMembers.map((m) => ({ id: m.id, name: m.name, linked: m.userId !== null }));
 
   const expenseDtos: ExpenseDTO[] = expenses.map((e) => ({
     id: e.id,
@@ -122,7 +167,8 @@ export const getTripLedger = cache(async (tripId: string): Promise<TripLedger | 
   });
 
   return {
-    trip,
+    trip: { ...trip, name: displayTripName({ ...trip, members }, access?.youMemberId ?? null), isOwner: access?.isOwner ?? false },
+    youMemberId: access?.youMemberId ?? null,
     members,
     memberById: new Map(members.map((m) => [m.id, m])),
     expenses: expenseDtos,
@@ -132,25 +178,63 @@ export const getTripLedger = cache(async (tripId: string): Promise<TripLedger | 
     suggestions: calculateSettlements(balances),
     summary,
   };
-});
+}
 
-export async function listTrips() {
+export interface SplitListItem {
+  id: string;
+  kind: TripKind;
+  name: string;
+  description: string | null;
+  currency: string;
+  createdAt: Date;
+  memberCount: number;
+  expenseCount: number;
+  totalMinor: number;
+  /** The logged-in user's balance here (positive = gets back). Null if their account isn't linked to a member. */
+  myNet: number | null;
+}
+
+/** Every trip, group and friend ledger the logged-in user can open, with their own balance in each. */
+export async function listSplits(): Promise<SplitListItem[]> {
+  const user = await requireUserPage();
   const trips = await prisma.trip.findMany({
+    where: { OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] },
     orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, description: true, currency: true, createdAt: true, _count: { select: { members: true, expenses: true } } },
+    include: {
+      members: { select: { id: true, name: true, userId: true } },
+      expenses: {
+        select: { amount: true, payers: { select: { memberId: true, amount: true } }, splits: { select: { memberId: true, amount: true } } },
+      },
+      settlements: { select: { payerId: true, receiverId: true, amount: true, status: true } },
+    },
   });
-  const totals = await prisma.expense.groupBy({ by: ["tripId"], _sum: { amount: true } });
-  const totalByTrip = new Map(totals.map((t) => [t.tripId, t._sum.amount ?? 0]));
-  return trips.map((t) => ({
-    id: t.id,
-    name: t.name,
-    description: t.description,
-    currency: t.currency,
-    createdAt: t.createdAt,
-    memberCount: t._count.members,
-    expenseCount: t._count.expenses,
-    totalMinor: totalByTrip.get(t.id) ?? 0,
-  }));
+  return trips.map((t) => {
+    const me = t.members.find((m) => m.userId === user.id) ?? null;
+    let myNet: number | null = null;
+    if (me) {
+      const balances = calculateMemberBalances({
+        memberIds: t.members.map((m) => m.id),
+        expenses: t.expenses.map((e) => ({
+          payers: e.payers.map((p) => ({ memberId: p.memberId, amountMinor: p.amount })),
+          splits: e.splits.map((x) => ({ memberId: x.memberId, amountMinor: x.amount })),
+        })),
+        settlements: t.settlements.map((x) => ({ payerId: x.payerId, receiverId: x.receiverId, amountMinor: x.amount, status: x.status })),
+      });
+      myNet = balances.find((b) => b.memberId === me.id)?.net ?? 0;
+    }
+    return {
+      id: t.id,
+      kind: t.kind,
+      name: displayTripName(t, me?.id ?? null),
+      description: t.description,
+      currency: t.currency,
+      createdAt: t.createdAt,
+      memberCount: t.members.length,
+      expenseCount: t.expenses.length,
+      totalMinor: t.expenses.reduce((a, e) => a + e.amount, 0),
+      myNet,
+    };
+  });
 }
 
 export interface ExpenseFilters {

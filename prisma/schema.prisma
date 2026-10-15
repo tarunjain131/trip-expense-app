@@ -9,16 +9,22 @@ datasource db {
   provider = "postgresql"
 }
 
-/// Future-ready: authentication is not implemented yet.
 model User {
-  id        String   @id @default(uuid()) @db.Uuid
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique // stored lower-case
+  name         String?
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   trips   Trip[]
   members TripMember[]
+}
+
+enum TripKind {
+  TRIP
+  GROUP
+  FRIEND // exactly two members: a running to-and-from balance
 }
 
 model Trip {
@@ -26,6 +32,8 @@ model Trip {
   name        String
   description String?
   currency    String   @default("INR")
+  kind        TripKind @default(TRIP)
+  inviteCode  String?  @unique
   ownerId     String?  @db.Uuid
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -55,6 +63,7 @@ model TripMember {
   received Settlement[]   @relation("SettlementReceiver")
 
   @@index([tripId])
+  @@index([userId])
 }
 
 enum SplitType {

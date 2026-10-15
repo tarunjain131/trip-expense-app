@@ -1,62 +1,115 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, LogIn, LogOut } from "lucide-react";
-import { loginAction, logoutAction } from "@/actions/auth";
+import { Loader2, LogIn, LogOut, UserPlus } from "lucide-react";
+import { loginAction, logoutAction, signupAction } from "@/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function LoginForm({ next, misconfigured }: { next?: string; misconfigured?: boolean }) {
+type Errors = Partial<Record<"name" | "email" | "password" | "form", string>>;
+
+/** Log-in and sign-up share one form: sign-up just adds a name field. */
+export function AuthForm({ mode, next, misconfigured }: { mode: "login" | "signup"; next?: string; misconfigured?: boolean }) {
   const router = useRouter();
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(misconfigured ? "Login isn't set up yet. The site owner needs to set APP_PASSWORD." : null);
+  const signup = mode === "signup";
+  const [values, setValues] = useState({ name: "", email: "", password: "" });
+  const [errors, setErrors] = useState<Errors>(
+    misconfigured ? { form: "Login isn't set up yet. The site owner needs to set AUTH_SECRET." } : {},
+  );
   const [pending, startTransition] = useTransition();
+  const set = (k: keyof typeof values) => (e: React.ChangeEvent<HTMLInputElement>) => setValues((v) => ({ ...v, [k]: e.target.value }));
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (pending) return;
-    if (!password) return setError("Enter the password.");
-    setError(null);
+    setErrors({});
     startTransition(async () => {
       try {
-        const res = await loginAction(password, next);
-        if (!res.ok) return setError(res.error);
-        router.replace(res.next);
+        const res = signup ? await signupAction(values, next) : await loginAction({ email: values.email, password: values.password }, next);
+        if (!res.ok) {
+          const field = res.field === "name" || res.field === "email" || res.field === "password" ? res.field : "form";
+          return setErrors({ [field]: res.error });
+        }
+        router.replace(res.data.next);
         router.refresh();
       } catch {
-        setError("Couldn't reach the server. Check your connection and try again.");
+        setErrors({ form: "Couldn't reach the server. Check your connection and try again." });
       }
     });
   }
 
+  const other = `${signup ? "/login" : "/signup"}${next ? `?next=${encodeURIComponent(next)}` : ""}`;
   return (
     <form onSubmit={submit} className="space-y-4" noValidate>
-      <div className="space-y-1.5">
-        <Label htmlFor="password">Password</Label>
+      {signup && (
+        <Field id="name" label="Your name" error={errors.name}>
+          <Input id="name" autoComplete="name" autoFocus value={values.name} onChange={set("name")} aria-invalid={!!errors.name} className="h-12 text-base" />
+        </Field>
+      )}
+      <Field id="email" label="Email" error={errors.email}>
+        <Input
+          id="email"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          autoFocus={!signup}
+          value={values.email}
+          onChange={set("email")}
+          aria-invalid={!!errors.email}
+          className="h-12 text-base"
+        />
+      </Field>
+      <Field id="password" label="Password" error={errors.password} hint={signup ? "At least 8 characters." : undefined}>
         <Input
           id="password"
           type="password"
-          autoComplete="current-password"
-          autoFocus
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          aria-invalid={!!error}
-          aria-describedby={error ? "login-error" : undefined}
+          autoComplete={signup ? "new-password" : "current-password"}
+          value={values.password}
+          onChange={set("password")}
+          aria-invalid={!!errors.password}
           className="h-12 text-base"
         />
-        {error && (
-          <p id="login-error" role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-      </div>
+      </Field>
+      {errors.form && (
+        <p role="alert" className="text-sm text-destructive">
+          {errors.form}
+        </p>
+      )}
       <Button type="submit" size="lg" className="h-12 w-full gap-2 text-base" disabled={pending || misconfigured}>
-        {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <LogIn className="size-4" aria-hidden="true" />}
-        {pending ? "Checking..." : "Log in"}
+        {pending ? (
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+        ) : signup ? (
+          <UserPlus className="size-4" aria-hidden="true" />
+        ) : (
+          <LogIn className="size-4" aria-hidden="true" />
+        )}
+        {pending ? "Please wait..." : signup ? "Create account" : "Log in"}
       </Button>
+      <p className="text-center text-sm text-muted-foreground">
+        {signup ? "Already have an account? " : "New here? "}
+        <Link href={other} className="font-medium text-primary underline-offset-4 hover:underline">
+          {signup ? "Log in" : "Create an account"}
+        </Link>
+      </p>
     </form>
+  );
+}
+
+function Field({ id, label, error, hint, children }: { id: string; label: string; error?: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {children}
+      {hint && !error && <p className="text-xs text-muted-foreground">{hint}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

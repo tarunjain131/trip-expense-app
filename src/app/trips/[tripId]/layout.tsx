@@ -24,14 +24,14 @@ export default async function TripLayout({ children, params }: LayoutProps<"/tri
           <div className="flex min-w-0 items-center gap-2 md:mb-2">
             <Link
               href="/trips"
-              aria-label="All trips"
+              aria-label="All splits"
               className="-ml-2 flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               <ChevronLeft className="size-5" aria-hidden="true" />
             </Link>
             <div className="min-w-0">
               <p className="truncate text-base font-semibold leading-tight">{trip.name}</p>
-              <p className="text-xs text-muted-foreground">{plural(trip._count.members, "member")}</p>
+              <p className="text-xs text-muted-foreground">{trip.kind === "FRIEND" ? "Just the two of you" : plural(trip.memberCount, "member")}</p>
             </div>
             <div className="ml-auto">
               <LogoutButton />

@@ -8,7 +8,7 @@ import { plural } from "@/lib/format";
 import { BalanceStatus } from "@/components/balance-status";
 import { EmptyState } from "@/components/empty-state";
 import { ExpenseRow } from "@/components/expense/expense-row";
-import { YouPicker } from "@/components/trip/you-picker";
+import { ClaimMemberBanner } from "@/components/trip/claim-member-banner";
 import { Card, CardContent } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -67,12 +67,12 @@ export default async function DashboardPage({ params }: PageProps<"/trips/[tripI
               </p>
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">Pick who you are below to see your balance.</p>
+            <p className="text-sm text-muted-foreground">Link your account to see your balance.</p>
           )}
         </Card>
       </div>
 
-      {!you && <YouPicker tripId={tripId} members={members} />}
+      {!you && <ClaimMemberBanner tripId={tripId} members={members.filter((m) => !m.linked)} />}
 
       <section aria-labelledby="quick-actions" className="space-y-2">
         <h2 id="quick-actions" className="sr-only">

@@ -1,17 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
-import { E2E_PASSWORD } from "../../playwright.config";
 
 const NAMES = ["Tarun", "Rahul", "Amit", "Rohit", "Kunal", "Ankit", "Vivek", "Harsh", "Mohit", "Nikhil", "Akash", "Varun"];
+const PASSWORD = "e2e-password-123";
+const uniqueEmail = () => `e2e.${Date.now()}.${Math.random().toString(36).slice(2, 7)}@example.com`;
 
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.getByLabel("Password").fill(E2E_PASSWORD);
-  await page.getByRole("button", { name: "Log in" }).click();
+/** Creates a fresh account named "Tarun" (so the first member of each trip is Tarun) and lands on the dashboard. */
+async function signup(page: Page, name = "Tarun", email = uniqueEmail()) {
+  await page.goto("/signup");
+  await page.getByLabel("Your name").fill(name);
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/trips$/);
+  return email;
 }
 
-test.describe("access control", () => {
-  test("the app is locked until the password is entered", async ({ page, request }) => {
+test.describe("accounts and access control", () => {
+  test("the app is locked until you log in, and each account only sees its own splits", async ({ page, request, browser }) => {
     // Unauthenticated pages redirect to the login page, preserving where you were going.
     await page.goto("/trips/00000000-0000-4000-8000-000000000000/members");
     await expect(page).toHaveURL(/\/login\?next=/);
@@ -19,20 +24,60 @@ test.describe("access control", () => {
     const post = await request.post("/trips", { data: {}, maxRedirects: 0 });
     expect(post.status()).toBe(401);
 
-    await page.getByLabel("Password").fill("wrong-password");
-    await page.getByRole("button", { name: "Log in" }).click();
-    await expect(page.locator("#login-error")).toContainText("isn't right");
-
-    await page.getByLabel("Password").fill(E2E_PASSWORD);
-    await page.getByRole("button", { name: "Log in" }).click();
-    // lands back on the page that was requested (404 trip is fine - we are past the gate)
-    await expect(page).toHaveURL(/\/trips\/0000/);
-
-    await page.goto("/trips");
+    const email = await signup(page);
     await page.getByRole("button", { name: /log out/i }).click();
     await expect(page).toHaveURL(/\/login/);
-    await page.goto("/trips");
-    await expect(page).toHaveURL(/\/login/);
+
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill("wrong-password");
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page.getByText("That email or password isn't right.")).toBeVisible();
+
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page).toHaveURL(/\/trips$/);
+
+    // Someone else cannot open this account's trip, even with the URL.
+    await page.getByRole("button", { name: /new trip/i }).first().click();
+    await page.getByLabel("Name", { exact: true }).fill(`Private ${Date.now()}`);
+    await page.getByRole("button", { name: "Create trip" }).click();
+    await expect(page).toHaveURL(/\/trips\/[0-9a-f-]{36}\/members$/);
+    const url = page.url();
+
+    const other = await browser.newContext();
+    const otherPage = await other.newPage();
+    await signup(otherPage, "Stranger");
+    await otherPage.goto(url);
+    // (The status is 200 because the loading shell streams first; what matters is that nothing of the trip is shown.)
+    await expect(otherPage.getByText("This page could not be found")).toBeVisible();
+    await expect(otherPage.getByText("Invite people")).toHaveCount(0);
+    await other.close();
+  });
+
+  test("two people keep a running balance and see the same ledger from each side", async ({ page, browser }) => {
+    const friendEmail = uniqueEmail();
+    const other = await browser.newContext();
+    const otherPage = await other.newPage();
+    await signup(otherPage, "Rahul", friendEmail);
+
+    await signup(page, "Tarun");
+    await page.getByRole("button", { name: "Add friend" }).click();
+    await page.getByLabel("Friend's name").fill("Rahul");
+    await page.getByLabel(/Their email/).fill(friendEmail);
+    await page.getByRole("button", { name: "Add friend" }).last().click();
+    await expect(page).toHaveURL(/\/trips\/[0-9a-f-]{36}$/);
+    const tripUrl = new URL(page.url()).pathname;
+
+    await addExpense(page, tripUrl, { amount: "1000", title: "Dinner", paidBy: "Tarun" });
+    await page.goto(tripUrl);
+    await expect(page.getByText("You get back ₹500")).toBeVisible();
+
+    // Rahul sees the same ledger from his side, named after Tarun.
+    await otherPage.goto("/trips");
+    await expect(otherPage.getByText("You owe ₹500").first()).toBeVisible();
+    await otherPage.getByRole("link", { name: /Tarun/ }).first().click();
+    await expect(otherPage.getByText("You owe ₹500")).toBeVisible();
+    await other.close();
   });
 });
 
@@ -44,10 +89,10 @@ async function addExpense(
   await page.goto(`${tripUrl}/expenses/new`);
   await page.getByLabel("Amount", { exact: true }).fill(e.amount);
   await page.getByLabel("What was it for?").fill(e.title);
-  await page.getByLabel("Paid by").selectOption({ label: e.paidBy });
+  await page.getByLabel("Paid by").selectOption({ label: e.paidBy === "Tarun" ? "Tarun (You)" : e.paidBy });
   if (e.only) {
     await page.getByRole("button", { name: "Clear" }).click();
-    for (const n of e.only) await page.getByRole("checkbox", { name: n, exact: true }).check();
+    for (const n of e.only) await page.getByRole("checkbox", { name: n === "Tarun" ? "Tarun (You)" : n, exact: true }).check();
     await expect(page.getByText(`${e.only.length} of 12 people`)).toBeVisible();
   }
   await page.getByRole("button", { name: /^Add ₹/ }).click();
@@ -56,11 +101,11 @@ async function addExpense(
 }
 
 test("trip → members → expenses → balances → settle up", async ({ page }) => {
-  await login(page);
+  await signup(page);
   // 1. create a trip
   await page.goto("/trips");
   await page.getByRole("button", { name: /new trip|create your first trip/i }).first().click();
-  await page.getByLabel("Trip name").fill(`E2E Chopta ${Date.now()}`);
+  await page.getByLabel("Name", { exact: true }).fill(`E2E Chopta ${Date.now()}`);
   await page.getByRole("button", { name: "Create trip" }).click();
   await expect(page).toHaveURL(/\/trips\/[0-9a-f-]{36}\/members$/);
   const tripUrl = new URL(page.url()).pathname.replace(/\/members$/, "");
@@ -94,9 +139,8 @@ test("trip → members → expenses → balances → settle up", async ({ page }
   await expect(page.getByTestId("balance-Tarun")).toContainText("gets back ₹10,500");
   await expect(page.getByTestId("balance-Varun")).toContainText("owes ₹1,000");
 
-  // "You" is display-only
+  // "You" comes from the logged-in account
   await page.goto(tripUrl);
-  await page.getByLabel(/Who are you/).selectOption({ label: "Tarun" });
   await expect(page.getByText("You get back ₹10,500")).toBeVisible();
   await expect(page.getByTestId("total-expenses")).toHaveText("₹15,400");
 
@@ -133,10 +177,10 @@ test("trip → members → expenses → balances → settle up", async ({ page }
 });
 
 test("edit and delete an expense, validation errors, split types", async ({ page }) => {
-  await login(page);
+  await signup(page);
   await page.goto("/trips");
   await page.getByRole("button", { name: /new trip|create your first trip/i }).first().click();
-  await page.getByLabel("Trip name").fill(`E2E Edit ${Date.now()}`);
+  await page.getByLabel("Name", { exact: true }).fill(`E2E Edit ${Date.now()}`);
   await page.getByRole("button", { name: "Create trip" }).click();
   await expect(page).toHaveURL(/\/members$/);
   const tripUrl = new URL(page.url()).pathname.replace(/\/members$/, "");

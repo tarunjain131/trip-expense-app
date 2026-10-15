@@ -1,17 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { AUTH_COOKIE, authMode, safeNextPath, verifySessionToken } from "@/lib/auth";
+import { AUTH_COOKIE, authSecret, safeNextPath, verifySessionToken } from "@/lib/auth";
 
-/** Everything except /login requires a valid session cookie. */
+const PUBLIC_PAGES = new Set(["/login", "/signup"]);
+
+/** Everything except the login/signup pages requires a validly signed session cookie. */
 export async function proxy(request: NextRequest) {
-  const mode = authMode();
-  if (mode === "disabled") return NextResponse.next();
-
   const { pathname, search } = request.nextUrl;
-  const authed = mode === "enabled" && (await verifySessionToken(request.cookies.get(AUTH_COOKIE)?.value));
+  const authed = authSecret() !== null && (await verifySessionToken(request.cookies.get(AUTH_COOKIE)?.value)) !== null;
 
-  if (pathname === "/login") {
-    return authed ? NextResponse.redirect(new URL("/trips", request.url)) : NextResponse.next();
-  }
+  // Logged-in visitors are bounced from these pages by the pages themselves (they can check the user still exists).
+  if (PUBLIC_PAGES.has(pathname)) return NextResponse.next();
   if (authed) return NextResponse.next();
 
   // Server Action calls are POSTs: answer with 401 rather than an HTML redirect.

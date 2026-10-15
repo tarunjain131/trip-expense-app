@@ -2,18 +2,23 @@
 
 import { revalidatePath } from "next/cache";
 import * as settlements from "@/lib/services/settlements";
+import { requireTripAccess } from "@/lib/access";
 import { run, type ActionResult } from "./result";
 
 const refresh = (tripId: string) => revalidatePath(`/trips/${tripId}`, "layout");
 
 export async function markSettlementPaidAction(tripId: string, input: unknown): Promise<ActionResult<{ id: string }>> {
-  const res = await run(() => settlements.createSettlement(tripId, input));
+  const res = await run(async () => {
+    await requireTripAccess(tripId);
+    return settlements.createSettlement(tripId, input);
+  });
   if (res.ok) refresh(tripId);
   return res;
 }
 
 export async function revertSettlementAction(tripId: string, settlementId: string): Promise<ActionResult<undefined>> {
   const res = await run(async () => {
+    await requireTripAccess(tripId);
     await settlements.revertSettlement(tripId, settlementId);
     return undefined;
   });

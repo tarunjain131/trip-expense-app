@@ -58,7 +58,7 @@ export default async function MemberDetailPage({ params }: PageProps<"/trips/[tr
         </dl>
       </Card>
 
-      <MemberActions tripId={tripId} member={member} isYou={member.id === youId} redirectOnRemove={`/trips/${tripId}/members`} />
+      <MemberActions tripId={tripId} member={member} isYou={member.id === youId} canClaim={!youId && !member.linked} locked={ledger.trip.kind === "FRIEND"} redirectOnRemove={`/trips/${tripId}/members`} />
 
       <Section title="Expenses paid" empty="Hasn't paid for anything yet.">
         {paidExpenses.map((e) => (

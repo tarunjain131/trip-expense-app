@@ -8,6 +8,8 @@ import { EmptyState } from "@/components/empty-state";
 import { MemberAvatar } from "@/components/member-avatar";
 import { BalanceStatus } from "@/components/balance-status";
 import { AddMembersForm } from "@/components/trip/add-members-form";
+import { InviteCard } from "@/components/trip/invite-card";
+import { DeleteTripButton } from "@/components/trip/delete-trip-button";
 import { MemberActions } from "@/components/trip/member-actions";
 import { plural } from "@/lib/format";
 
@@ -22,7 +24,8 @@ export default async function MembersPage({ params }: PageProps<"/trips/[tripId]
   return (
     <div className="space-y-5">
       <PageHeader title="Members" description={plural(members.length, "person", "people")} />
-      <AddMembersForm tripId={tripId} />
+      <InviteCard tripId={tripId} name={trip.name} code={trip.inviteCode} isOwner={trip.isOwner} kind={trip.kind} />
+      {trip.kind !== "FRIEND" && <AddMembersForm tripId={tripId} />}
 
       {members.length === 0 ? (
         <EmptyState icon={Users} title="No members yet" description="Add your trip members to start splitting expenses." />
@@ -46,11 +49,16 @@ export default async function MembersPage({ params }: PageProps<"/trips/[tripId]
                   </div>
                   <ChevronRight className="ml-auto size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </Link>
-                <MemberActions tripId={tripId} member={m} isYou={m.id === youId} compact />
+                <MemberActions tripId={tripId} member={m} isYou={m.id === youId} locked={trip.kind === "FRIEND"} compact />
               </li>
             );
           })}
         </ul>
+      )}
+      {trip.isOwner && (
+        <div className="border-t pt-5">
+          <DeleteTripButton tripId={tripId} name={trip.name} />
+        </div>
       )}
     </div>
   );

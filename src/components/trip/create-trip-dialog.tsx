@@ -20,10 +20,11 @@ const formSchema = z.object({
   name: z.string().trim().min(1, "Give your trip a name.").max(80, "Keep the name under 80 characters."),
   description: z.string().trim().max(300, "Keep the description under 300 characters."),
   currency: z.string(),
+  kind: z.enum(["TRIP", "GROUP"]),
 });
 type FormValues = z.infer<typeof formSchema>;
 
-export function CreateTripDialog({ label = "New trip", variant = "default" }: { label?: string; variant?: "default" | "outline" }) {
+export function CreateTripDialog({ label = "New trip or group", variant = "default" }: { label?: string; variant?: "default" | "outline" }) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
@@ -34,7 +35,7 @@ export function CreateTripDialog({ label = "New trip", variant = "default" }: { 
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { name: "", description: "", currency: DEFAULT_CURRENCY },
+    defaultValues: { name: "", description: "", currency: DEFAULT_CURRENCY, kind: "TRIP" },
   });
 
   const onSubmit = handleSubmit((values) => {
@@ -65,12 +66,19 @@ export function CreateTripDialog({ label = "New trip", variant = "default" }: { 
       </DialogTrigger>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create a trip</DialogTitle>
+          <DialogTitle>Create a trip or group</DialogTitle>
           <DialogDescription>You&apos;ll add the people and expenses next.</DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div className="space-y-1.5">
-            <Label htmlFor="trip-name">Trip name</Label>
+            <Label htmlFor="trip-kind">Type</Label>
+            <NativeSelect id="trip-kind" {...register("kind")}>
+              <option value="TRIP">Trip (one-off, with a group)</option>
+              <option value="GROUP">Group (ongoing: flatmates, office...)</option>
+            </NativeSelect>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="trip-name">Name</Label>
             <Input
               id="trip-name"
               placeholder="Chopta Trip"

@@ -4,8 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Pencil, Trash2, UserCheck } from "lucide-react";
 import { toast } from "sonner";
-import { removeMemberAction, renameMemberAction } from "@/actions/trips";
-import { setYouAction } from "@/actions/you";
+import { claimMemberAction, removeMemberAction, renameMemberAction } from "@/actions/trips";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,13 +23,18 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 export function MemberActions({
   tripId,
   member,
-  isYou,
+  canClaim,
+  locked,
   redirectOnRemove,
   compact,
 }: {
   tripId: string;
   member: { id: string; name: string };
-  isYou: boolean;
+  isYou?: boolean;
+  /** Show "This is me": the viewer has no linked member here yet and this one is unclaimed. */
+  canClaim?: boolean;
+  /** Two-person ledgers always keep both people. */
+  locked?: boolean;
   redirectOnRemove?: string;
   compact?: boolean;
 }) {
@@ -76,12 +80,12 @@ export function MemberActions({
     });
   }
 
-  function toggleYou() {
+  function claim() {
     startTransition(async () => {
       try {
-        const res = await setYouAction(tripId, isYou ? null : member.id);
+        const res = await claimMemberAction(tripId, member.id);
         if (!res.ok) return void toast.error(res.error);
-        toast.success(isYou ? "Cleared" : `You are ${member.name}`);
+        toast.success(`You are ${member.name}`);
         router.refresh();
       } catch {
         toast.error("Couldn't reach the server. Check your connection and try again.");
@@ -92,10 +96,10 @@ export function MemberActions({
   const size = compact ? "icon" : "lg";
   return (
     <div className="flex items-center gap-1.5">
-      {!compact && (
-        <Button variant={isYou ? "secondary" : "outline"} size="lg" className="h-11 gap-2" onClick={toggleYou} disabled={pending}>
+      {!compact && canClaim && (
+        <Button variant="outline" size="lg" className="h-11 gap-2" onClick={claim} disabled={pending}>
           <UserCheck className="size-4" aria-hidden="true" />
-          {isYou ? "This is not me" : "This is me"}
+          This is me
         </Button>
       )}
       <Button
@@ -112,16 +116,18 @@ export function MemberActions({
         <Pencil className="size-4" aria-hidden="true" />
         {!compact && "Rename"}
       </Button>
-      <Button
-        variant="outline"
-        size={size}
-        className={compact ? "size-10 text-destructive" : "h-11 gap-2 text-destructive"}
-        onClick={() => setRemoveOpen(true)}
-        aria-label={`Remove ${member.name}`}
-      >
-        <Trash2 className="size-4" aria-hidden="true" />
-        {!compact && "Remove"}
-      </Button>
+      {!locked && (
+        <Button
+          variant="outline"
+          size={size}
+          className={compact ? "size-10 text-destructive" : "h-11 gap-2 text-destructive"}
+          onClick={() => setRemoveOpen(true)}
+          aria-label={`Remove ${member.name}`}
+        >
+          <Trash2 className="size-4" aria-hidden="true" />
+          {!compact && "Remove"}
+        </Button>
+      )}
 
       <Dialog open={renameOpen} onOpenChange={(o) => !pending && setRenameOpen(o)}>
         <DialogContent>

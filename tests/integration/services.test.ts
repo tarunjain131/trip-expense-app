@@ -31,7 +31,7 @@ async function setup(names = ["Tarun", "Rahul", "Amit", "Rohit"]) {
   for (const n of names) ids[n] = (await s.trips.addMember(trip.id, { name: n })).id;
   return { tripId: trip.id, ids };
 }
-const net = (l: NonNullable<Awaited<ReturnType<Services["queries"]["getTripLedger"]>>>, id: string) =>
+const net = (l: NonNullable<Awaited<ReturnType<Services["queries"]["loadTripLedger"]>>>, id: string) =>
   l.balances.find((b) => b.memberId === id)!.net;
 
 describe("service layer (real database)", () => {
@@ -45,7 +45,7 @@ describe("service layer (real database)", () => {
       payers: [{ memberId: ids.Tarun }],
       participants: Object.values(ids).map((memberId) => ({ memberId })),
     });
-    const l = (await s.queries.getTripLedger(tripId))!;
+    const l = (await s.queries.loadTripLedger(tripId))!;
     expect(l.summary.totalSpent).toBe(600000);
     expect(net(l, ids.Tarun)).toBe(450000);
     expect(net(l, ids.Rahul)).toBe(-150000);
@@ -90,7 +90,7 @@ describe("service layer (real database)", () => {
         { memberId: ids.C, value: "1" },
       ],
     });
-    const l = (await s.queries.getTripLedger(tripId))!;
+    const l = (await s.queries.loadTripLedger(tripId))!;
     expect(l.balances.reduce((a, b) => a + b.net, 0)).toBe(0);
     expect(l.expenses).toHaveLength(3);
   });
@@ -116,7 +116,7 @@ describe("service layer (real database)", () => {
     await expect(
       s.expenses.createExpense(one.tripId, { ...base, payers: [{ memberId: other.ids.X }] }),
     ).rejects.toThrow(/not part of the trip/);
-    expect((await s.queries.getTripLedger(one.tripId))!.expenses).toHaveLength(0);
+    expect((await s.queries.loadTripLedger(one.tripId))!.expenses).toHaveLength(0);
   });
 
   it("22. edits an expense and balances follow", async () => {
@@ -128,7 +128,7 @@ describe("service layer (real database)", () => {
       payers: [{ memberId: ids.A }],
       participants: [{ memberId: ids.A }, { memberId: ids.B }],
     });
-    const before = (await s.queries.getTripLedger(tripId))!;
+    const before = (await s.queries.loadTripLedger(tripId))!;
     expect(net(before, ids.B)).toBe(-50000);
     await s.expenses.updateExpense(tripId, id, {
       title: "Cab",
@@ -138,7 +138,7 @@ describe("service layer (real database)", () => {
       participants: [{ memberId: ids.A }, { memberId: ids.B }],
       version: before.expenses[0].updatedAt.toISOString(),
     });
-    const after = (await s.queries.getTripLedger(tripId))!;
+    const after = (await s.queries.loadTripLedger(tripId))!;
     expect(net(after, ids.B)).toBe(-100000);
     // stale version is rejected
     await expect(
@@ -165,9 +165,9 @@ describe("service layer (real database)", () => {
     });
     await expect(s.expenses.deleteExpense(b.tripId, id)).rejects.toThrow(/already deleted/);
     await s.expenses.duplicateExpense(a.tripId, id);
-    expect((await s.queries.getTripLedger(a.tripId))!.expenses).toHaveLength(2);
+    expect((await s.queries.loadTripLedger(a.tripId))!.expenses).toHaveLength(2);
     await s.expenses.deleteExpense(a.tripId, id);
-    const l = (await s.queries.getTripLedger(a.tripId))!;
+    const l = (await s.queries.loadTripLedger(a.tripId))!;
     expect(l.expenses).toHaveLength(1);
     expect(net(l, a.ids.B)).toBe(-15000);
   });
@@ -182,7 +182,7 @@ describe("service layer (real database)", () => {
       participants: Object.values(ids).map((memberId) => ({ memberId })),
     });
     const { id: partial } = await s.settlements.createSettlement(tripId, { payerId: ids.B, receiverId: ids.A, amount: "400" });
-    let l = (await s.queries.getTripLedger(tripId))!;
+    let l = (await s.queries.loadTripLedger(tripId))!;
     expect(net(l, ids.B)).toBe(-60000);
     expect(l.suggestions.find((x) => x.fromId === ids.B)?.amountMinor).toBe(60000);
 
@@ -204,7 +204,7 @@ describe("service layer (real database)", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
 
     await s.settlements.revertSettlement(tripId, partial);
-    l = (await s.queries.getTripLedger(tripId))!;
+    l = (await s.queries.loadTripLedger(tripId))!;
     expect(net(l, ids.B)).toBe(-100000);
     expect(l.settlements.find((x) => x.id === partial)?.status).toBe("REVERTED");
     await expect(s.settlements.revertSettlement(tripId, partial)).rejects.toThrow(/already reverted/);
@@ -224,7 +224,7 @@ describe("service layer (real database)", () => {
     await s.trips.renameMember(tripId, ids.B, { name: "Bobby" });
     await expect(s.trips.addMember(tripId, { name: "bobby" })).rejects.toThrow(/already in this trip/);
     await expect(s.trips.addMember(tripId, { name: "  " })).rejects.toThrow();
-    const l = (await s.queries.getTripLedger(tripId))!;
+    const l = (await s.queries.loadTripLedger(tripId))!;
     expect(l.members.map((m) => m.name).sort()).toEqual(["A", "Bobby"]);
   });
 });

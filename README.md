@@ -1,7 +1,8 @@
-# Splitrip — group expense splitting for trips
+# Splitrip — expense splitting for trips, groups and friends
 
-A Splitwise-style app for groups (built around a 12-person trip): create a trip, add members, record expenses
-(equal / exact / percentage / shares, one or many payers), see who is owed what, and settle up with the fewest payments.
+A Splitwise-style app: sign up, then keep a running two-person balance with a friend, or split a trip / ongoing group with many people.
+Record expenses (equal / exact / percentage / shares, one or many payers), see who is owed what, and settle up with the fewest payments.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for what is done and planned.
 
 **Stack:** Next.js 16 (App Router, Server Components + Server Actions) · TypeScript · Tailwind CSS v4 · shadcn/ui (Radix) ·
 Lucide · PostgreSQL · Prisma 7 · Zod · React Hook Form · Vitest · Playwright.
@@ -23,8 +24,8 @@ npm run dev                      # http://localhost:3000
 | Variable | Required | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | yes | PostgreSQL connection string, e.g. `postgresql://user:pass@host:5432/db?schema=public` |
-| `APP_PASSWORD` | production | Shared password for the login page. If unset in production the app stays **locked**; unset in development means no login |
-| `AUTH_SECRET` | recommended | Extra secret mixed into the session-cookie signature (`openssl rand -hex 32`) |
+| `AUTH_SECRET` | production | Signs the login session cookie (`openssl rand -hex 32`). If unset in production the app stays **locked**; changing it logs everyone out |
+| `LEGACY_OWNER_EMAIL` | once | Email of the account that adopts trips created before accounts existed |
 | `NEXT_PUBLIC_TIME_ZONE` | no | IANA zone used to show settlement timestamps and "today" in forms (default `Asia/Kolkata`) |
 | `TEST_DATABASE_URL` | tests | Database for integration tests (default `postgresql://postgres@localhost:5432/split_expense_test`) |
 | `E2E_DATABASE_URL` | e2e | Database for Playwright (defaults to the same test database) |
@@ -48,7 +49,7 @@ browser with `PW_CHANNEL=msedge npm run test:e2e` (or `chrome`).
 
 ## Deploying (Vercel or any Node host)
 
-1. Provision Postgres and set `DATABASE_URL`, `APP_PASSWORD` and `AUTH_SECRET` in the host's environment.
+1. Provision Postgres and set `DATABASE_URL` and `AUTH_SECRET` in the host's environment.
 2. Run `npm run db:deploy` against that database (CI step or one-off).
 3. Deploy. `postinstall` generates the Prisma client; `npm run build` does too.
 
@@ -87,20 +88,22 @@ tests/          unit (domain) · integration (services + real DB) · e2e (Playwr
   can never exceed what the payer owes or the receiver is owed — this is re-checked inside the transaction under a per-trip row lock, so double
   clicks and stale screens can't over-settle.
 
-### Security model
+### Accounts, access and splits
 
-* **Login gate:** the whole app sits behind one shared group password (`APP_PASSWORD`). `src/proxy.ts` redirects anything without a valid
-  signed, HttpOnly, 30-day session cookie to `/login` (POSTs get a 401), and every Server Action re-checks the session. Production fails
-  closed if the password isn't configured. Changing the password or `AUTH_SECRET` logs everyone out. Failed logins are delayed and throttled.
-
+* **Accounts:** email + password (scrypt hashes). The session is a signed, HttpOnly, 30-day cookie `userId.expiry.signature`; `src/proxy.ts`
+  redirects visitors without a valid one to `/login` (POSTs get a 401) and `getCurrentUser()` confirms the user still exists.
+  Production fails closed without `AUTH_SECRET`. Login/signup attempts are throttled per IP (best effort, per server instance).
+* **Three kinds of split** share one engine: `TRIP`, `GROUP`, and `FRIEND` (exactly two people: a running to-and-from balance, shown to each
+  side under the other person's name).
+* **Access:** a trip is visible to its owner and to members linked to an account (`TripMember.userId`). Every query and Server Action
+  goes through `getTripAccess` / `requireTripAccess` (`src/lib/access.ts`); anything else is "not found". Only the owner can delete or reset the invite link.
+* **Invites:** `/join/<code>` (after logging in) claims an existing placeholder member or adds the person as a new member; a friend ledger
+  claims its one free spot. Trips created before accounts existed (no owner) are adopted by the account whose email equals `LEGACY_OWNER_EMAIL` (on signup or login).
 * Every mutation is validated with Zod on the server and all ids are checked to belong to the trip in the URL (no cross-trip access).
-* There are no per-user accounts: anyone with the group password can edit every trip. Per-user auth is prepared for (`User` model,
-  `Trip.ownerId`, `TripMember.userId`); wrap the services with an ownership check.
-* "You" is a per-trip cookie set on this device; it's display-only and never enters calculations.
 
 ## Known limitations
 
-* One shared password, no per-user accounts, invites or per-trip permissions.
+* No password reset / email verification yet (see the roadmap).
 * Single currency per trip (INR default; INR/USD/EUR/GBP selectable), no conversion.
 * Members that appear in any expense or settlement cannot be deleted (only renamed) to keep history intact.
-* Not implemented (by design for v1): offline support, receipts/OCR, recurring expenses, notifications.
+* `npm run db:seed` creates a demo trip with no owner, so it is not visible to any account (it is only useful for inspecting data).

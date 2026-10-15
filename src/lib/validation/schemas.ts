@@ -24,8 +24,45 @@ export const tripInputSchema = z.object({
     .optional()
     .transform((v) => (v ? clean(v) : undefined)),
   currency: z.enum(CURRENCY_CODES).default(DEFAULT_CURRENCY),
+  kind: z.enum(["TRIP", "GROUP"]).default("TRIP"),
 });
 export type TripInput = z.infer<typeof tripInputSchema>;
+
+export const emailSchema = z
+  .string({ error: "Enter your email." })
+  .trim()
+  .toLowerCase()
+  .min(1, "Enter your email.")
+  .max(200, "That email is too long.")
+  .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Enter a valid email address.");
+
+const passwordSchema = z
+  .string({ error: "Enter a password." })
+  .min(8, "Use at least 8 characters.")
+  .max(200, "That password is too long.");
+
+export const signupInputSchema = z.object({
+  name: trimmed("Name", 60).transform(clean),
+  email: emailSchema,
+  password: passwordSchema,
+});
+
+export const loginInputSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(1, "Enter your password.").max(200),
+});
+
+/** A two-person "to and from" ledger with a friend. Email is optional: if they have an account, they see it immediately. */
+export const friendInputSchema = z.object({
+  name: trimmed("Friend's name", 60).transform(clean),
+  email: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v : undefined))
+    .pipe(emailSchema.optional()),
+  currency: z.enum(CURRENCY_CODES).default(DEFAULT_CURRENCY),
+});
 
 export const memberInputSchema = z.object({
   name: trimmed("Name", 60).transform(clean),
